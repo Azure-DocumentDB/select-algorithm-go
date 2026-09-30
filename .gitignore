@@ -1,0 +1,24 @@
+*.exe
+.env
+
+# Local data copy (user copies from ai/data/)
+data/*.json
+!data/README.md
+Hotels_Vector.json
+
+.env
+.env.*
+!.env.example
+.azure/
+data/*.json
+output/
+artifacts/
+node_modules/
+dist/
+.venv/
+venv/
+__pycache__/
+*.pyc
+bin/
+obj/
+target/
