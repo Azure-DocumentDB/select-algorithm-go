@@ -1,4 +1,4 @@
-module documentdb-select-algorithm
+module github.com/Azure-DocumentDB/select-algorithm-go
 
 go 1.24.0
 
