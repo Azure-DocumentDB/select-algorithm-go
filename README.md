@@ -55,7 +55,7 @@ go mod download
 ### 4. Run only against the approved disposable environment
 
 ```powershell
-go run .\src
+go run ./cmd/select-algorithm
 ```
 
 This compares search behavior on a small fixture, not production-scale performance. All nine combinations are attempted; use a tier supporting all three algorithms. Precomputed document vectors do not eliminate the live query-embedding call.

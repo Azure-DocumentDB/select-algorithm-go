@@ -17,6 +17,21 @@ Hotel fixtures are not redistributed: [data/README.md](data/README.md) pins the 
 
 No dependency versions or vector/agent algorithms are intentionally changed. The Go agent module namespace and local data/environment-file paths are adjusted where necessary. Invalid monorepo-only npm entry points are removed rather than advertised as working commands.
 
+### Go layout adjustment (2026-10-01)
+
+Upstream places the program in a directory named `src/`. In a standalone repository
+`go build ./...` fails there with `build output "src" already exists and is a directory`,
+because the default binary name collides with the directory name, so standard Go tooling
+and CI cannot build the repository.
+
+The package directory was renamed `src/` to `cmd/select-algorithm/`. The package is
+unchanged and still a single `package main`; no files were split, no identifiers were
+renamed, and no Go source content was modified. `go.mod` and `go.sum` are untouched.
+
+`go build ./...` now exits 0. `go vet ./...` still reports 14 pre-existing
+`primitive.E struct literal uses unkeyed fields` warnings inherited from upstream, left
+unchanged.
+
 ## Maintenance
 
 There is no automatic synchronization. Review upstream changes against this pinned baseline, apply only relevant fixes, retain notices, and record the imported revision and local adaptations here.
