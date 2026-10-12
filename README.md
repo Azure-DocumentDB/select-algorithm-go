@@ -1,73 +1,135 @@
 # select-algorithm-go
 
-**Go**. Compare IVF, HNSW, and DiskANN against cosine, L2, and inner-product metrics: nine combinations with sequential index creation, search, and removal.
+Compare **IVF, HNSW, and DiskANN × COS, L2, and IP** using nine isolated Azure DocumentDB collections. The default quickstart uses **precomputed 1536-dimensional vectors**, needs **no Azure OpenAI resource**, and makes no model calls. Each result is checked against an independent exhaustive, metric-specific numeric ranking.
 
-Standalone extraction of [the upstream sample](https://github.com/Azure-Samples/documentdb-samples/tree/f5a2675bbf349737234d0391e3ebee24b260e06f/ai/select-algorithm-go). See [UPSTREAM.md](UPSTREAM.md) for attribution, exact revision, changes, and maintenance policy.
+This is a small vector/index contract sample, **not a semantic relevance test, production recall study, or latency benchmark**. Raw scores across different metrics are not comparable. Inner-product top results need not be the query's own document when vector norms differ.
 
-## Before you run
+Standalone downstream of the Microsoft sample; see [UPSTREAM.md](UPSTREAM.md), the preserved [MIT license](LICENSE.md), and the evidence status in [TESTED.md](TESTED.md). A local mock pass is not live Azure authentication or search-engine proof.
 
-Use **Go 1.24 or newer**, Git, and Azure CLI or another supported Azure Identity sign-in mechanism.
-Use an existing, explicitly approved disposable Azure DocumentDB environment and an Azure OpenAI embedding deployment compatible with `text-embedding-3-small` and 1536-dimensional vectors.
-Your identity needs appropriate model access and a registered DocumentDB database identity with permissions for the sample operations. Network access must be configured deliberately; signing in alone does not grant database access.
+## Safety and prerequisites
 
-**These are cloud-mutating samples, not production services or read-only demos.** They can create/drop indexes, replace/drop collections, and invoke billable models. Some programs hardcode `Hotels` or collection names; an environment-variable change alone is not a universal isolation guarantee.
+- **Go 1.26.9 or newer**, Git, network access, and an explicitly approved **disposable** Azure DocumentDB cluster. The module rejects older Go toolchains. No Docker or global tool installation is required.
+- Choose a service tier/region supporting your intended algorithms. DiskANN and metric availability are server capabilities; a server rejection is reported as a failure, not silently skipped or counted as engine proof. Confirm current Azure requirements rather than treating an example SKU as universal.
+- Azure bills for the cluster/storage even when no model is used. This sample creates no Azure resources or firewall rules and performs no automatic cleanup. The operator owns provisioning and eventual resource deletion.
+- Use least-privilege database credentials and deliberately scoped network access. Native SCRAM and Microsoft Entra OIDC are separate explicit modes; there is no automatic credential fallback. Entra sign-in alone does not register/grant a database principal.
+- Writes require `VECTOR_SEARCH_ALLOW_WRITES=true`. Database names must be `go_disposable` or `vectorsearch_disposable`, optionally suffixed by `_` and a lowercase run ID; maximum 63 characters. Use a run-suffixed name for every live gate.
+- Exactly nine collections are used: `<prefix>_{ivf,hnsw,diskann}_{cos,l2,ip}`. `MONGO_COLLECTION` is rejected, preventing accidental reuse of one collection across metrics.
+- **No drop, delete, reset, replace, or cleanup operation exists.** All seed batches use deterministic IDs with `$setOnInsert` upserts. Existing documents/edits are preserved. Catalog conflicts fail before normal seeding instead of replacing indexes. Successful index creation is followed by catalog verification, even on populated collections.
+- Failures may leave newly inserted documents/indexes behind. Retry safely; do not erase existing data to force a passing fixture. Extra documents or edited vectors may invalidate fixture-quality expectations; choose a fresh dedicated prefix instead.
 
-Upstream documentation differs on minimum DiskANN tiers and model/API versions. Confirm current service requirements for your selected region and tier; the shared provisioning template currently chooses M40. Do not infer live readiness from source code, saved output, or syntax/build CI.
+## Fresh-start quickstart (bash/zsh)
 
-## Setup
+Run from this repository root. Configuration is read **only from the process environment**; `.env` is neither loaded nor executed. `.env.example` documents placeholders. Never commit credentials or paste them into issue/CI logs.
 
-Commands below use PowerShell and run from this repository root. They are instructions for a separately approved run; no live run is claimed by this extraction.
+### 1. Retrieve and verify the pinned fixture
 
-### 1. Retrieve the pinned sample data
+Follow [data/README.md](data/README.md) for the upstream source, terms, and PowerShell alternative. These commands refuse to overwrite a local data file and verify SHA-256 before it is used:
 
-Follow [data/README.md](data/README.md). It provides explicit downloads, source links, and SHA-256 checks. No data download or model call happens automatically on clone or install.
-
-### 2. Configure the sample
-
-Copy the placeholder-only example, then edit `.env` with your approved resource configuration. Do not commit `.env`.
-
-```powershell
-if (Test-Path -LiteralPath .env) { throw '.env already exists; edit it instead of overwriting it.' }
-Copy-Item -LiteralPath .env.example -Destination .env
-```
-
-After replacing every `<placeholder>`, import these plain `KEY=value` lines into this PowerShell process. Keep values unquoted and put comments on separate lines; this reads data without executing the file:
-
-```powershell
-Get-Content -LiteralPath .env | ForEach-Object {
-    $line = $_.Trim()
-    if ($line.Length -eq 0 -or $line.StartsWith('#')) { return }
-    if ($line -notmatch '^([A-Z][A-Z0-9_]*)=(.*)$') { throw 'Invalid .env line; expected KEY=value or a comment.' }
-    [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2], 'Process')
-}
-```
-
-The explicit import also covers samples that do not load dotenv files themselves. Node scripts and Go/Python dotenv helpers may additionally read the same repository-local `.env`.
-
-For an interactive passwordless run, sign in to the intended Azure identity with `az login`; confirm the resource permissions and database identity independently.
-
-### 3. Install/build when you are ready
-
-```powershell
+```sh
+mkdir -p data
+(set -C; curl --fail --location \
+  'https://raw.githubusercontent.com/Azure-Samples/documentdb-samples/f5a2675bbf349737234d0391e3ebee24b260e06f/ai/data/Hotels_Vector.json' \
+  > data/Hotels_Vector.json)
+printf '%s  %s\n' \
+  60c08c2cdd439444ba8601d94a1f3487f4a9ee56cd48ba201d983c96722de6e4 \
+  data/Hotels_Vector.json | shasum -a 256 -c -
+# Stop if either download or checksum verification fails.
 go mod download
+go mod verify
+go run ./cmd/query-vector -input data/Hotels_Vector.json -output data/query-vector.json
 ```
 
-### 4. Run only against the approved disposable environment
+The extractor validates the complete data file, uses the first stored vector, refuses to overwrite its output, and never calls a model/database. The pinned input has 50 hotels with 1536D vectors. This is a controlled numeric fixture, not a newly embedded natural-language query.
 
-```powershell
-go run ./cmd/select-algorithm
+### 2. Configure an approved namespace and explicit write opt-in
+
+```sh
+export MONGO_DATABASE=go_disposable_example_20261012
+export MONGO_COLLECTION_PREFIX=hotels
+export EMBEDDING_MODE=offline
+export DATA_FILE_WITH_VECTORS=data/Hotels_Vector.json
+export QUERY_VECTOR_FILE=data/query-vector.json
+export EMBEDDING_DIMENSIONS=1536
+export TOP_K=5
+export VECTOR_SEARCH_TIMEOUT=10m
+export VECTOR_SEARCH_CASE_TIMEOUT=1m
+export VECTOR_SEARCH_ALLOW_WRITES=true
 ```
 
-This compares search behavior on a small fixture, not production-scale performance. All nine combinations are attempted; use a tier supporting all three algorithms. Precomputed document vectors do not eliminate the live query-embedding call.
+`EMBEDDED_FIELD` defaults to `DescriptionVector`; `SEED_ID_FIELD` to `HotelId`; `LOAD_SIZE_BATCH` to 100. All document vectors and IDs must be valid; the sample does not silently filter bad records or invent random IDs. `_id` must be a nonempty string, or a nonempty string `HotelId` generates a deterministic ID. Timeouts are bounded (overall 1s–30m, per case 1s–5m). The per-case deadline prevents one unsupported/stalled case from consuming the entire run; the overall deadline still wins.
 
-## Shared provisioning
+### 3. Choose one database authentication mode
 
-Provisioning remains [upstream](https://github.com/Azure-Samples/documentdb-samples/tree/f5a2675bbf349737234d0391e3ebee24b260e06f/infra), not duplicated here. If you choose azd, use a separate checkout of the [upstream repository root](https://github.com/Azure-Samples/documentdb-samples/blob/f5a2675bbf349737234d0391e3ebee24b260e06f/README.md), not this sample directory.
-Review and harden its broad firewall/admin defaults and fallback administrator password before any deployment. No infrastructure, cloud credentials, GitHub Actions workflows, or automatic deployments are included in this extraction.
+**Native SCRAM:** set `MONGO_AUTH_MODE=connection-string` and supply `MONGO_CONNECTION_STRING` through your approved secret mechanism. It must be an authenticated `mongodb+srv://` URI for `*.mongocluster.cosmos.azure.com` (including `.global.`) with no database path; percent-encode reserved username/password characters. Do not put real credentials in shell history. TLS certificate/hostname verification is mandatory; bypass options are rejected. Retryable writes are disabled for service compatibility.
 
-## Maintenance and license
+**Microsoft Entra OIDC:**
 
-This is a standalone downstream snapshot, not a GitHub fork of the complete monorepo. Upstream fixes must be reviewed and ported manually; update the recorded revision in [UPSTREAM.md](UPSTREAM.md) when doing so.
-Dependencies and sample algorithms are retained from the pinned source. Static extraction checks do not certify dependency compatibility, authentication, deployment, or model behavior.
+```sh
+export MONGO_AUTH_MODE=oidc
+unset MONGO_CONNECTION_STRING
+export MONGO_HOST='<your-cluster>.global.mongocluster.cosmos.azure.com'
+# Optional principal username if your service registration requires it:
+# export MONGO_OIDC_USERNAME='<registered-principal>'
+az login
+```
 
-Sample code is Copyright (c) Microsoft Corporation, under the preserved [MIT license](LICENSE.md). Dataset source/terms remain linked in the data guide.
+`MONGO_CLUSTER_NAME` can derive the standard host if `MONGO_HOST` is unset. The Azure Identity credential chain requests only `https://ossrdbms-aad.database.windows.net/.default`; token expiry is propagated to the MongoDB driver, and empty/expired/near-expiry tokens fail. The client pings before claiming authenticated connectivity. Public Azure DocumentDB hosts only; no arbitrary Mongo endpoints, custom gateways, self-signed TLS bypass, or password fallback.
+
+### 4. Build and compare
+
+```sh
+mkdir -p bin
+go build -o bin/select-algorithm ./cmd/select-algorithm
+./bin/select-algorithm
+```
+
+One authenticated connection runs all nine cases sequentially, each with a distinct collection and metric-specific index. Output is sanitized JSON with per-case status, seed counts, hit count, quality status, and a numeric server code when available—never connection URIs, tokens, full documents, or vectors. All nine cases are attempted after common configuration/data/authentication prerequisites succeed. Any failure remains nonzero even when the other eight succeed; subsequent cases still run (or are recorded canceled after the overall deadline).
+
+**Exact built-binary exit codes:**
+
+- `0`: all nine cases passed catalog, seed, result-count, and exact metric top-K checks.
+- `1`: runtime/authentication, any partial/unsupported case, deadline, incomplete report, or output failure.
+- `2`: arguments, configuration, or local fixture rejected before database mutation.
+
+`go run ./cmd/select-algorithm` is convenient interactively, but the Go launcher can map a nonzero child status to shell code 1; scripts should use the binary.
+
+Quality compares returned IDs/ranks to exhaustive COS/L2/IP calculations over the input fixture, allows numeric ties within relative tolerance `1e-6`, rejects duplicate/unknown results, and checks `min(TOP_K, fixture size)` hits. This small exact-quality gate can legitimately fail for approximate search or modified collections; it is not a promise of perfect ANN recall on arbitrary datasets. No cross-metric score comparison is made.
+
+## Local tests and security gate (no Azure credentials)
+
+```sh
+go test -race -count=1 ./...
+go vet ./...
+go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+```
+
+Tests cover configuration rejection, TLS/OIDC scope/expiry, optional-model origin/redirect protection, seed preservation/failure, index conflicts/catalog verification, real driver wire mocks for all nine cases, independent quality oracles, partial failure aggregation, deadlines, and CLI status codes. Driver wire mocks exercise the driver/application contract, **not a real vector engine**. Vulnerability output must distinguish reachable findings (blocking) from unimported-module/unreached-symbol advisories. Dependencies are intentionally patched; MongoDB v1 driver is retained at 1.17.9 for this sample and is deprecated upstream, so a v2 migration is future maintenance rather than an implied current upgrade.
+
+The GitHub workflow uses only GitHub-owned checkout/setup actions, `contents: read`, Go 1.26.9 and `stable`, checksum verification, race tests, vet/build, and the vulnerability gate. It contains no credentials, model calls, deploy, or live integration step.
+
+## Explicit live validation
+
+After a separate approval for a dedicated disposable namespace and the local security gates:
+
+```sh
+VECTOR_SEARCH_LIVE_TEST=1 go test -tags=integration -count=1 -v -timeout=20m \
+  ./internal/documentdb -run '^TestLiveComparisons$'
+```
+
+The live gate requires the flag, write opt-in, a run-suffixed dedicated DB, offline mode, 1536D vectors, and a query exactly equal to a stored seed vector. It uses the correct independent oracle for **each metric**, not an invalid universal IP self-match assumption. Each of nine subtests seeds a preserved marker into a pre-existing fixture document, verifies the catalog and exact ranks, repeats safely with zero insertions, and compares before/after document snapshots. Any unsupported case fails the run. Repeat separately with both auth modes and separate `MONGO_COLLECTION_PREFIX` values such as `native` and `oidc`. Tagged execution without explicit opt-in fails immediately instead of silently skipping green. Operator-owned resource cleanup is still required.
+
+## Optional Azure OpenAI path — NOT live validated
+
+This compatibility path is **not required for the quickstart and is not currently certified**; live model validation was blocked by S0 account eligibility. Do not interpret mock tests as model or Azure OpenAI authentication proof. No model resource is provisioned here.
+
+To deliberately make a billable query-embedding request, set `EMBEDDING_MODE=azure-openai`, unset `QUERY_VECTOR_FILE`, and supply `AZURE_OPENAI_EMBEDDING_ENDPOINT=https://<resource>.openai.azure.com/`, `AZURE_OPENAI_EMBEDDING_MODEL=<compatible-deployment>`, and optional `AZURE_OPENAI_EMBEDDING_KEY` through a secret manager (otherwise Azure Identity). `QUERY_TEXT` supplies the text. The request uses the `/openai/v1/` API and must produce the configured dimensions. Only the public HTTPS Azure OpenAI origin on port 443 is accepted, before credential acquisition; redirects are never followed, including same-host redirects. Database and model authentication are independent. Foreign origins/proxies are unsupported. Exact numeric ranking remains a fixture check, not semantic quality evidence.
+
+## Troubleshooting and maintenance
+
+- **Configuration/code 2:** check required env names, non-overlapping collection prefix, write opt-in, vector dimensions, and input paths. Legacy `AZURE_DOCUMENTDB_DATABASENAME`/`DOCUMENTDB_CLUSTER_NAME` are not the new configuration contract.
+- **Authentication/runtime code 1:** inspect the Azure principal registration, RBAC, SCRAM credentials, firewall and DNS outside the sample. SDK details are intentionally withheld from output to protect credentials/data.
+- **Unsupported server code / index conflict:** confirm tier/capability or choose a fresh namespace; the program will not drop an incompatible index or relabel partial success.
+- **Empty/late search:** only empty successful searches retry, bounded by context; authentication, server, decode, and unsupported errors do not retry indefinitely. Increase an approved timeout only after understanding the cause.
+- **Quality mismatch:** verify the pinned data/query and check for preserved edits/additional documents. Do not reset populated collections to hide a failure.
+
+Upstream changes are reviewed and ported manually. Retain Microsoft MIT notices and dataset source terms. Infrastructure remains [upstream](https://github.com/Azure-Samples/documentdb-samples/tree/f5a2675bbf349737234d0391e3ebee24b260e06f/infra); broad defaults require separate review and are not automatically deployed.
