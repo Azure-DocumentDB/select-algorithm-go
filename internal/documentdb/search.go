@@ -16,6 +16,7 @@ type IndexInfo struct {
 	Name                string `bson:"name" json:"name"`
 	Key                 bson.M `bson:"key" json:"key"`
 	CosmosSearchOptions bson.M `bson:"cosmosSearchOptions" json:"cosmosSearchOptions,omitempty"`
+	Extra               bson.M `bson:",inline" json:"catalog_options,omitempty"`
 }
 
 func IndexSpec(c Config, algorithm string) (bson.D, error) {
@@ -75,6 +76,25 @@ func CompatibleIndex(indexes []IndexInfo, c Config, algorithm string) (bool, err
 		}
 		if len(index.Key) != 1 || index.Key[c.VectorField] != "cosmosSearch" {
 			return false, errors.New("existing index name conflicts with requested vector index; use a new collection")
+		}
+		// Preserve and examine the full catalog document. Unknown semantics fail
+		// closed; descriptive/version metadata does not alter index membership.
+		for key, value := range index.Extra {
+			switch key {
+			case "v", "ns", "background":
+				// Version, namespace and completed build strategy are metadata.
+			case "sparse", "unique", "hidden":
+				if flag, ok := value.(bool); !ok || flag {
+					return false, errors.New("existing vector index has incompatible catalog options; use a new collection")
+				}
+			default:
+				// Includes partialFilterExpression, expireAfterSeconds, collation,
+				// and future options whose semantics this sample cannot verify.
+				return false, errors.New("existing vector index has unrecognized or incompatible catalog options; use a new collection")
+			}
+		}
+		if len(index.CosmosSearchOptions) != len(settings) {
+			return false, errors.New("existing vector index has additional or missing vector options; use a new collection")
 		}
 		for _, setting := range settings {
 			// BSON numeric values can be int32/int64/double; compare canonical values.

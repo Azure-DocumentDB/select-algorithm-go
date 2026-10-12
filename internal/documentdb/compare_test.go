@@ -3,6 +3,7 @@ package documentdb
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -250,5 +251,45 @@ func TestComparisonRejectsInputBeforeNetwork(t *testing.T) {
 	_, err = RunCompareAll(context.Background(), c)
 	if !errors.As(err, &input) || !strings.Contains(err.Error(), "read data file") {
 		t.Fatal("missing fixture did not reject before connection")
+	}
+}
+
+func TestFullCatalogSemanticsWireRejectsBeforeSeed(t *testing.T) {
+	mt := mtest.New(t, mtest.NewOptions().ClientType(mtest.Mock).CreateCollection(false))
+	for _, option := range []bson.E{
+		{Key: "partialFilterExpression", Value: bson.M{"HotelId": "one"}},
+		{Key: "sparse", Value: true}, {Key: "unique", Value: true}, {Key: "hidden", Value: true},
+		{Key: "expireAfterSeconds", Value: int32(0)},
+		{Key: "collation", Value: bson.M{"locale": "en"}},
+		{Key: "unknownFutureOption", Value: false}, {Key: "sparse", Value: "false"},
+	} {
+		mt.Run(option.Key+"_"+fmt.Sprint(option.Value), func(mt *mtest.T) {
+			c := configFixture(mt.T)
+			coll := mt.Client.Database(c.DatabaseName).Collection(c.Collection("ivf"))
+			ns := c.DatabaseName + "." + coll.Name()
+			catalog := append(indexDoc(mt.T, c, "ivf"), option)
+			mt.AddMockResponses(mtest.CreateCursorResponse(0, ns, mtest.FirstBatch, catalog))
+			if _, err := runOnCollection(context.Background(), coll, c, "ivf", []bson.M{{"_id": "1"}}, []float64{1}); err == nil {
+				mt.Fatal("incompatible full catalog accepted")
+			}
+			events := mt.GetAllStartedEvents()
+			if len(events) != 1 || events[0].CommandName != "listIndexes" {
+				mt.Fatal("mutation/search occurred after catalog rejection")
+			}
+		})
+	}
+}
+func TestCatalogDefaultsAndUnrelatedIndexesPreserved(t *testing.T) {
+	c := configFixture(t)
+	index := indexInfo(t, c, "ivf")
+	index.Extra = bson.M{"v": int32(2), "ns": "metadata", "background": true, "sparse": false, "unique": false, "hidden": false}
+	ordinary := IndexInfo{Name: "unrelated_ttl", Key: bson.M{"other": int32(1)}, Extra: bson.M{"expireAfterSeconds": int32(1)}}
+	found, err := CompatibleIndex([]IndexInfo{ordinary, index}, c, "ivf")
+	if err != nil || !found {
+		t.Fatalf("harmless metadata or unrelated index rejected: %v", err)
+	}
+	index.CosmosSearchOptions["unknownFutureOption"] = true
+	if _, err := CompatibleIndex([]IndexInfo{index}, c, "ivf"); err == nil {
+		t.Fatal("extra vector semantics accepted")
 	}
 }
