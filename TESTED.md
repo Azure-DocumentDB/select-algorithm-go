@@ -18,38 +18,23 @@ Source: the downstream safe-comparison change containing this file. Exact commit
 
 These are **application/driver-contract checks, not real-engine or live authentication evidence**. The historical six local engine combinations are not evidence for this revised source, and unsupported local DiskANN is not a pass.
 
-## Real Azure precomputed fixture — NOT YET RUN for this change
 
-The parent/operator owns the approved cluster, credential delivery, execution, evidence, and cleanup. Fill the following after actual execution; do not infer readiness from the template.
+## Real managed Azure validation — 2026-10-12
 
-| Field | Actual value |
-| --- | --- |
-| Exact source SHA | PENDING |
-| UTC date/time, runtime and OS | PENDING |
-| Azure region / SKU / server version | PENDING |
-| Dedicated DB and auth-specific collection prefixes | PENDING (no credential values) |
-| Fixture SHA-256, dimensions, document count, query origin | PENDING |
-| Native SCRAM all-nine test command/exit | NOT RUN |
-| Entra OIDC all-nine test command/exit | NOT RUN |
-| Per-case COS/L2/IP exact numeric top-K assertion | NOT RUN |
-| Catalog verification and idempotent rerun | NOT RUN |
-| Existing document/edit preservation | NOT RUN |
-| Unsupported/server-rejected cases | PENDING; failures must remain nonzero |
-| Sanitized evidence locations | PENDING |
-| Resource cleanup confirmation/cost caveat | Operator-owned, PENDING |
+Tested on one disposable Azure DocumentDB M30 in West US 2, one shard, MongoDB 8.0 compatibility, 128 GiB storage and HA disabled. Native SCRAM-SHA-256 and Microsoft Entra OIDC were exercised separately with verified TLS and a client-IP firewall. No OpenAI/model calls were made.
 
-Commands (after local gates, explicit approval, and correctly configured process environment):
+Fixture: 50 public pinned records with 1,536-dimensional vectors; the query is the first stored vector. This is a numerical vector/database contract test, not semantic relevance, performance, production-readiness or a tier/version support matrix. No real credentials or infrastructure identifiers are published.
 
-```sh
-VECTOR_SEARCH_LIVE_TEST=1 go test -tags=integration -count=1 -v -timeout=20m \
-  ./internal/documentdb -run '^TestLiveComparisons$'
-# Repeat under independently configured native and OIDC modes/prefixes.
-go build -o bin/select-algorithm ./cmd/select-algorithm
-./bin/select-algorithm
-```
+IVF/HNSW/DiskANN × COS/L2/IP passed under both native and OIDC authentication: **18/18 cases**. Each case verified the actual index catalog, five results against an independent metric-specific rank calculation, creation on an already populated collection, and idempotent repeated seeding. Existing fixture edits remained unchanged. Both real comparison CLI executions returned all nine cases passed and exit 0.
 
-Report each of IVF/HNSW/DiskANN × COS/L2/IP, authentication mode, exit code and actual assertions separately. The test uses an exact metric-specific reference; do not assert IP self-match or compare raw COS/L2/IP scores. Partial success, unsupported service cases, skipped tests, and model-unavailable runs must never be represented as all-nine PASS.
+Wrong password, disabled write opt-in, unsafe database name and foreign host were rejected with nonzero process exit and sanitized messages. The full catalog-semantic review fix was included. The local final suite has 45 top-level tests / 181 passing events; race/build/vet and govulncheck pass with zero reachable findings (module-only unimported advisories remain disclosed).
 
-## Optional Azure OpenAI — explicitly unvalidated
+Tested implementation: `900cbd70e41e43b1feef88288459addf8873c419`.
 
-No live model request was made during this change. Validation remains blocked by S0 account eligibility; optional HTTP/auth/redirect behavior is covered only by local mocks. Neither database OIDC proof nor an offline query vector proves Azure OpenAI authentication, semantic quality, or deployment compatibility. A future live model test requires separate permission, available model eligibility, exact endpoint/API contract, dimensions, costs, and sanitized evidence.
+## Optional Azure OpenAI — not live-validated
+
+The optional model path has local contract tests only. Subscription OpenAI S0 eligibility is blocked. No live model call, semantic quality, or Azure OpenAI authorization is implied by the precomputed-vector Azure tests.
+
+## Scope and cleanup
+
+These tests used only separately approved synthetic namespaces on a disposable cluster. The sample never automatically deletes databases, collections or indexes. Resource cleanup is an explicit environment-owner responsibility. Publication is conditioned on verifying that the test resource group is gone, hosted CI passes, and an anonymous clean checkout works. MIT licensing and pinned upstream data provenance are retained.

@@ -133,3 +133,7 @@ To deliberately make a billable query-embedding request, set `EMBEDDING_MODE=azu
 - **Quality mismatch:** verify the pinned data/query and check for preserved edits/additional documents. Do not reset populated collections to hide a failure.
 
 Upstream changes are reviewed and ported manually. Retain Microsoft MIT notices and dataset source terms. Infrastructure remains [upstream](https://github.com/Azure-Samples/documentdb-samples/tree/f5a2675bbf349737234d0391e3ebee24b260e06f/infra); broad defaults require separate review and are not automatically deployed.
+
+## Dated validation
+
+See [TESTED.md](TESTED.md) for the real managed-Azure results, authentication/algorithm matrix, local checks and explicit limits.
